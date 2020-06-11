@@ -12,7 +12,7 @@ from bokeh import palettes
 from Bio.SubsMat import MatrixInfo
 from Bio import SeqIO
 
-#Establish argument parser
+# Establish argument parser
 parser = argparse.ArgumentParser()
 parser.add_argument("-s", action = "store", type = str, dest = "seq_path", required = True)
 parser.add_argument("-a", action = "store", type = str, dest = "align_path", default = None)
@@ -23,7 +23,7 @@ args = parser.parse_args()
 
 class Rule_set:
 	def __init__(self, coiled_coil = False):
-		#Establish alphabet
+		# Establish amino acid alphabet
 		self.all_aas = "WIFLCMVYPATHGSQNEDKR"
 
 		self.hydrophobe_dict = {
@@ -32,7 +32,10 @@ class Rule_set:
 								"N":-0.600, "Q":-0.220, "H":0.130, "K":-0.990, "P":0.720, "W":2.250
 						  	   }
 
-		#Set colors for each amino acid based on hydrophobicity (two aa's per color)
+		# Order of amino acids when viewed as helical wheel
+		self.wheel_order = [0, 11, 4, 15, 8, 1, 12, 5, 16, 9, 2, 13, 6, 17, 10, 3, 14, 7]
+
+		# Set colors for each amino acid based on hydrophobicity (two aa's per color)
 		pal = palettes.all_palettes['RdYlBu'][10]
 		self.color_dict = {}
 		for i, aa in enumerate(self.all_aas):
@@ -44,7 +47,7 @@ class Rule_set:
 		self.offset = 0
 		self.matrix = MatrixInfo.blosum80
 
-		#Helix type-specific parameters
+		# Helix type-specific parameters
 		self.master_angle = 102 if coiled_coil else 100
 		self.step = 7 if coiled_coil else 18 #Number of aa's per wheel level
 		self.width = 8 if coiled_coil else 2 #Number of levels
@@ -79,7 +82,7 @@ class Wheel_set:
 
 		return _wheels
 
-	#Get aa start and stop indices corresponding to each ring in HWP
+	# Get aa start and stop indices corresponding to each ring in HWP
 	def get_bounds(self):
 		step = self.rules.step
 		width = self.rules.width
@@ -115,8 +118,6 @@ class Wheel:
 		self.rules = _rules
 		self.wheel_num = _wheel_num
 		self.residues = _residues
-
-		print("in wheel class len residues =", len(self.residues))
 		self.length = len(self.residues)
 		self.levels = self.get_levels()
 		self.source = self.build_source()
@@ -140,7 +141,7 @@ class Wheel:
 
 		return _levels
 
-	#Get x and y coordinates based on angle and ring number (level)
+	# Get x and y coordinates based on angle and ring number (level)
 	def get_coor(self, angle, level = 0, degrees = True):
 		master_rad = self.rules.master_rad
 		level_sep = self.rules.level_sep
@@ -155,7 +156,7 @@ class Wheel:
 
 		return x, y
 
-	#Build column data source to be used to construct bokeh diagram
+	# Build column data source to be used to construct bokeh diagram
 	def build_source(self):
 		colors, Xs, Ys, names, aa_num, mean_scores = ([] for _ in range(6))
 		color_dict = self.rules.color_dict
@@ -163,7 +164,7 @@ class Wheel:
 		wheel_sep = self.rules.wheel_sep
 		step = self.rules.step
 
-		#Might want to rework system for converting conservation score to circle size
+		# Might want to rework system for converting conservation score to circle size
 		scores = [resi.size for resi in self.residues]
 		min = abs(np.amin(scores))
 		min = 9.4
@@ -181,7 +182,7 @@ class Wheel:
 
 			Xs.append(x_)
 
-			#Distance between wheels
+			# Distance between wheels
 			Ys.append(y_ - (self.wheel_num * wheel_sep))
 			names.append(resi.id)
 			aa_num.append(resi.num)
@@ -190,9 +191,8 @@ class Wheel:
 
 		return source
 
+	# Generate helical wheel projection
 	def plot(self, plot):
-		
-	#Generate helical wheel projection
 		step = self.rules.step
 		data = self.source.data
 		start = self.residues[0].num
@@ -215,41 +215,7 @@ class Wheel:
 		plot.add_layout(labels)
 		plot.add_layout(seq_range)
 
-# def get_wheel_seq(primary_seq):
-# 	wheel_seq = []
-# 	threshold = 18
-# 	i = 0
-
-# 	while i < (len(primary_seq)):
-# 		if len(wheel_seq) > threshold:
-# 			wheel_seq = wheel_seq[:threshold]
-# 			i = threshold
-# 			threshold += 18
-
-# 			if i >= len(primary_seq):
-# 				break
-
-# 		wheel_seq.append(primary_seq[i])
-# 		try:
-# 			wheel_seq.append(primary_seq[i + 11])
-# 		except: pass
-
-# 		try:
-# 			wheel_seq.append(primary_seq[i + 4])
-# 		except: pass
-
-# 		try:
-# 			wheel_seq.append(primary_seq[i + 15])
-# 		except: pass
-
-# 		try:
-# 			wheel_seq.append(primary_seq[i + 8])
-# 		except: pass
-		
-# 		i += 1
-
-# 	return wheel_seq
-
+# Gets amino acid sequence as viewed in helical wheel
 def get_wheel_seq(residues):
 	wheel_seq = []
 	threshold = 18
@@ -285,28 +251,56 @@ def get_wheel_seq(residues):
 
 	return wheel_seq
 
-def find_phobe_patch(wheel_seq, rules):
+def find_phobe_patch(rules, residues):
+	amph_wheels = []
 	hp_dict = rules.hydrophobe_dict
+	step = rules.step
 	window_size = 5
-	i = window_size - 1
-	hp_scores = []
-	while i < len(wheel_seq):
-		print("i = ", i, end = "  ")
-		print("i' = ", wheel_seq[i].num, end = " ")
-		score = 0
-		for x in range(i - window_size + 1, i + 1):
-			print(wheel_seq[x].id, end = "  ")
-			score += hp_dict[wheel_seq[x].id]
+	thresh = 0
+	
+	 #Get every possible wheel (set of 18 residues for normal helix)
+	for k in range (step, len(residues) - step):
+		sub_residues = residues[k-step:k] # primary amino acid sequence
+		wheel_seq = [] # sequence of amino acids around wheel
+		for pos in rules.wheel_order:
+			try:
+				wheel_seq.append(sub_residues[pos])
+			except:
+				pass
 
-		print(round(score, 1))
+		# print("sub_residues = ", [resi.id for resi in sub_residues])
+		# print("wheel seq =", [resi.id for resi in wheel_seq])
+		
+		#Score wheel by sliding window around 18-member wheel
+		i = window_size - 1
+		max_score = 0
+		start_pos = 0
+		
+		while i < step:
+			score = 0
+			# Sum scores of residues in window
+			for x in range(i - window_size + 1, i + 1):
+				# print(sub_residues[x].id, end = "  ")
+				score += hp_dict[wheel_seq[x].id]
 
-		# print("i = ", i, wheel_seq[i-window_size:i], round(score, 1))
+			if score > max_score:
+				start_pos = (i - window_size + 1)
+				max_score = score
+			# print(round(score, 1))
 
-		hp_scores.append(round(score, 1))
+			i += 1
 
-		i += 1
+		if max_score > thresh:
+			# input()
+			amph_wheels.append(Wheel(rules, sub_residues, len(amph_wheels)))
+			# print("k =", k, end = " ")
+			print("k' =", sub_residues[0].num, end = " ")
+			print("window = ", [resi.id for resi in wheel_seq[start_pos:(start_pos + window_size)]], end = " ")
+			print("score =", max_score)
 
-	return hp_scores
+	
+
+	return amph_wheels
 
 def plot_amph_wheels(rules, residues, hp_scores, plot, wheel_seq):
 	thresh = 7
@@ -319,7 +313,7 @@ def plot_amph_wheels(rules, residues, hp_scores, plot, wheel_seq):
 	for wheel in wheels:
 		wheel.plot(plot)
 
-#Assesses a user-defined subset of the provided sequence and alignment
+# Assesses a user-defined subset of the provided sequence and alignment
 def handle_range(seq, alignment):
 	range_ = args.seq_range
 
@@ -346,14 +340,14 @@ def handle_range(seq, alignment):
 
 	return new_seq, new_align
 
-#Return conservation score from Blosum matrix for given aa pair
+# Return conservation score from Blosum matrix for given aa pair
 def get_score(pair, matrix):
 	if pair in matrix:
 		return matrix[pair]
 
 	return matrix[tuple(reversed(pair))]
 
-#Constructs matrix of conservation scores for each amino acid position in each alignment sequence
+# Constructs matrix of conservation scores for each amino acid position in each alignment sequence
 def get_score_matrix(align_seqs, matrix):
 	gap_cost = -10
 	ref_seq = align_seqs[0]
@@ -370,7 +364,7 @@ def get_score_matrix(align_seqs, matrix):
 	return score_matrix
 
 def get_resis(seq_path, alignment_path, rules):
-	#Get primary sequence to be analyzed
+	# Get primary sequence to be analyzed
 	try:
 		seq = SeqIO.read(seq_path, "fasta").seq
 		if len(seq) == 0:
@@ -378,7 +372,7 @@ def get_resis(seq_path, alignment_path, rules):
 	except:
 		raise ValueError("Invalid protein sequence provided for analyzation.")
 
-	#Get and clean sequence alignment
+	# Get and clean sequence alignment
 	if alignment_path is None:
 		mean_scores = np.full(len(seq), rules.default_resi_size)
 	else:
@@ -433,16 +427,17 @@ def main():
 	#TEST
 
 	prim_seq = [resi.id for resi in master_res_list]
-	wheel_seq = get_wheel_seq(master_res_list)
+	# wheel_seq = get_wheel_seq(master_res_list)
 
-	scores = find_phobe_patch(wheel_seq, rules)
+	amph_wheels = find_phobe_patch(rules, master_res_list)
+
+	for wheel in amph_wheels:
+		wheel.plot(plot)
+
 	# print(scores)
-	plot_amph_wheels(rules, master_res_list, scores, plot, wheel_seq)
+	# plot_amph_wheels(rules, master_res_list, scores, plot, wheel_seq)
 
 	#-----------------------------------------------------------
-
-
-	
 
 	plot.grid.visible = False
 	plot.axis.visible = False
