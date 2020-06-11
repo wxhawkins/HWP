@@ -21,39 +21,16 @@ parser.add_argument("-c", action = "store_true", dest = "coiled_coil", default =
 parser.add_argument("-f", action = "store_true", dest = "find", default = False)
 args = parser.parse_args()
 
-
-#Get primary sequence to be analyzed
-try:
-	seq = SeqIO.read(args.seq_path, "fasta").seq
-	if len(seq) == 0:
-		raise Exception
-except:
-	raise ValueError("Invalid protein sequence provided for analyzation.")
-
-#Get and clean sequence alignment
-align_seqs = args.align_path
-if align_seqs is not None:
-	align_seqs = []
-
-	for fasta in SeqIO.parse(args.align_path, "fasta"):
-		align_seqs.append(fasta.seq)
-
-	align_seqs = np.array(align_seqs)
-
-	gap_found = True
-	while gap_found:
-		gap_found = False
-		for pos in range(len(align_seqs[0])):
-			if align_seqs[0, pos] == "-":
-				align_seqs = np.delete(align_seqs, pos, axis = 1)
-				gap_found = True
-				break
-
-
 class Rule_set:
 	def __init__(self, coiled_coil = False):
 		#Establish alphabet
 		self.all_aas = "WIFLCMVYPATHGSQNEDKR"
+
+		self.hydrophobe_dict = {
+								"A":0.310, "D":-0.770, "E":-0.640, "I":1.800, "M":1.230, "S":-0.040, "Y": 0.960,
+								"R":-1.010, "C":1.540, "G":0.000, "L":1.700, "F":1.790, "T":0.260, "V":1.200,
+								"N":-0.600, "Q":-0.220, "H":0.130, "K":-0.990, "P":0.720, "W":2.250
+						  	   }
 
 		#Set colors for each amino acid based on hydrophobicity (two aa's per color)
 		pal = palettes.all_palettes['RdYlBu'][10]
@@ -62,10 +39,10 @@ class Rule_set:
 			color_ = pal[math.floor(i / 2)]
 			self.color_dict[aa] = color_
 
-		self.default_aa_size = 2
+		self.default_resi_size = 2
 		self.master_rad = 10
 		self.offset = 0
-		self.mastrix = MatrixInfo.blosum80
+		self.matrix = MatrixInfo.blosum80
 
 		#Helix type-specific parameters
 		self.master_angle = 102 if coiled_coil else 100
@@ -81,179 +58,266 @@ class Residue:
 		self.num = _num
 	
 	def __str__(self):
-		return self.identity
+		return self.id
 
 class Wheel_set:
-	class Wheel:
-		class Level:
-			def __init__(self, _residues, _complete):
-				self.residues = _residues
-				self.complete = _complete
+	def __init__(self, _rules, _residues, _wheels = None):
+		self.rules = _rules
+		self.residues = _residues
+		self.length = len(self.residues)
+		self.wheels = _wheels
 
-			def __str__(self):
-				_ = ""
-				return _.join([resi.identity for resi in self.residues])
-
-		
-
-
-		def __init__(self, rules_, identities_, scores_, wheel_num_, first_resi_num_):
-			self.rules = rules_
-			self.first_resi_num = first_resi_num_
-			self.wheel_num = wheel_num_
-			self.identities = identities_
-			self.scores = scores_			
-			self.size = len(self.identities)
-			self.residues = self.get_residues()
-			self.levels = self.get_levels()
-			self.source = self.build_source()
-
-		def __str__(self):
-			return (str(self.identities) + " , wheel_num = " + str(self.wheel_num))
-			
-
-		def get_residues(self):
-			_residues = []
-			for i in range(self.size):
-				_num = self.first_resi_num + i
-				_residues.append(self.Residue(self.identities[i], self.scores[i], _num))
-			# return [self.Residue(self.identities[i], self.scores[i]) for i in range(self.size)]
-			return _residues
-			
-		def get_levels(self):
-			_levels = []
-			step = self.rules.step
-			last_delim = 0
-
-			for delim in range(step, self.size, step):
-				_levels.append(self.Level(self.residues[last_delim:delim], True))
-				last_delim = delim
-			
-			if last_delim != self.size:
-				_levels.append(self.Level(self.residues[last_delim:], False))
-
-			return _levels
-
-		#Get x and y coordinates based on angle and ring number (level)
-		def get_coor(self, angle, level = 0, degrees = True):
-			master_rad = self.rules.master_rad
-			level_sep = self.rules.level_sep
-
-			if degrees:
-				angle = math.radians(angle)
-			
-			rad = master_rad + (level * level_sep)
-
-			x = rad * math.sin(angle)
-			y = rad * math.cos(angle)
-
-			return x, y
-
-		#Build column data source to be used to construct bokeh diagram
-		def build_source(self):
-			colors, Xs, Ys, names, aa_num, mean_scores = ([] for _ in range(6))
-
-			#Might want to rework system for converting conservation score to circle size
-			min = abs(np.amin(self.scores))
-			min = 9.4
-
-			for num, aa in enumerate(self.identities):
-				color_dict = self.rules.color_dict
-				master_angle = self.rules.master_angle
-				wheel_sep = self.rules.wheel_sep
-				step = self.rules.step
-
-				colors.append(color_dict[aa])
-				print("step =", step)
-				print("wheel_num =", self.wheel_num)
-				print("num =", num)
-
-				score_ = ((self.scores[num + (self.wheel_num * step)] + min + 2.5)  * 4)
-				mean_scores.append(score_)
-
-				angle = master_angle * num
-				level = math.floor(num / step)
-
-				x_, y_ = self.get_coor(angle, level = level)
-
-				Xs.append(x_)
-
-				#Distance between wheels
-				Ys.append(y_ - (self.wheel_num * wheel_sep))
-				names.append(aa)
-				aa_num.append(num + (self.wheel_num * step) + 1)
-
-			source = ColumnDataSource(data = dict(_Xs = Xs, _Ys = Ys, _names = names, _colors = colors, _aa_num = aa_num, _scores = mean_scores))
-
-			input()
-			return source
-
-		def plot(self, plot):
-			
-		#Generate helical wheel projection
-			step = self.rules.step
-			data = self.source.data
-			start = self.first_resi_num
-			stop = start + self.size
-
-			plot.line(x = data["_Xs"][:step], y = data["_Ys"][:step])
-			plot.circle(x =  "_Xs", y =  "_Ys", color =  "_colors", name = "_names", size = "_scores", source = source)
-
-			labels = LabelSet(
-								x = "_Xs", y = "_Ys", text = "_names", level = "overlay", x_offset = -5, 
-								y_offset = -5, source = self.source, render_mode = "canvas", text_color = "white"
-							)
-
-			seq_range = Label(
-								x = data["_Xs"][0] + 4, y = data["_Ys"][0] - 27,
-								text= ("Sequence Range: " + str(start + 1) + "-" + str(stop)),
-								text_font_size = "18pt"
-							)
-
-			plot.add_layout(labels)
-			plot.add_layout(seq_range)
-
-	def __init__(self, rules_, identities_, scores_, wheels_ = None):
-		self.rules = rules_
-		self.identities = identities_
-		self.scores = scores_
-
-		if wheels_ is None:
+		if _wheels is None:
 			self.wheels = self.get_wheels()
 
 	def get_wheels(self):
 		_wheels = []
-		bounds_set = self.get_bounds(self.identities)
+		bounds_set = self.get_bounds()
 
 		for wheel_num, bounds in enumerate(bounds_set):
-			sub_ids = self.identities[bounds[0]:bounds[1]]
-			sub_scores = self.scores[bounds[0]:bounds[1]]
-			_wheels.append(self.Wheel(self.rules, sub_ids, sub_scores, wheel_num, bounds[0]))
+			_wheels.append(Wheel(self.rules, self.residues[bounds[0]:bounds[1]], wheel_num))
 
 		return _wheels
 
 	#Get aa start and stop indices corresponding to each ring in HWP
-	def get_bounds(self, seq):
+	def get_bounds(self):
 		step = self.rules.step
 		width = self.rules.width
+		length = self.length
 
-		if (step * width) > len(seq):
-			return [(0, len(seq))]
+		if (step * width) > length:
+			return [(0, length)]
 
 		bounds = []
-		for start in range(0, len(seq), step):
-			if start + (step * width) > len(seq):
-				bounds.append((start, len(seq)))
+		for start in range(0, length, step):
+			if start + (step * width) > length:
+				bounds.append((start, length))
 			else:
 				bounds.append((start, start + (step * width)))
 			
 		return bounds
 
-	
-
 	def plot_wheels(self, plot):
 		for wheel in self.wheels:
 			wheel.plot(plot)
+
+class Wheel:
+	class Level:
+		def __init__(self, _residues, _complete):
+			self.residues = _residues
+			self.complete = _complete
+
+		def __str__(self):
+			_ = ""
+			return _.join([resi.id for resi in self.residues])
+
+	def __init__(self, _rules, _residues, _wheel_num):
+		self.rules = _rules
+		self.wheel_num = _wheel_num
+		self.residues = _residues
+
+		print("in wheel class len residues =", len(self.residues))
+		self.length = len(self.residues)
+		self.levels = self.get_levels()
+		self.source = self.build_source()
+
+	def __str__(self):
+		aa_string = ""
+		aa_string = aa_string.join([resi.id for resi in self.residues])
+		return (aa_string + " , wheel_num = " + str(self.wheel_num))
+		
+	def get_levels(self):
+		_levels = []
+		step = self.rules.step
+		last_delim = 0
+
+		for delim in range(step, self.length, step):
+			_levels.append(self.Level(self.residues[last_delim:delim], True))
+			last_delim = delim
+		
+		if last_delim != self.length:
+			_levels.append(self.Level(self.residues[last_delim:], False))
+
+		return _levels
+
+	#Get x and y coordinates based on angle and ring number (level)
+	def get_coor(self, angle, level = 0, degrees = True):
+		master_rad = self.rules.master_rad
+		level_sep = self.rules.level_sep
+
+		if degrees:
+			angle = math.radians(angle)
+		
+		rad = master_rad + (level * level_sep)
+
+		x = rad * math.sin(angle)
+		y = rad * math.cos(angle)
+
+		return x, y
+
+	#Build column data source to be used to construct bokeh diagram
+	def build_source(self):
+		colors, Xs, Ys, names, aa_num, mean_scores = ([] for _ in range(6))
+		color_dict = self.rules.color_dict
+		master_angle = self.rules.master_angle
+		wheel_sep = self.rules.wheel_sep
+		step = self.rules.step
+
+		#Might want to rework system for converting conservation score to circle size
+		scores = [resi.size for resi in self.residues]
+		min = abs(np.amin(scores))
+		min = 9.4
+
+		for pos, resi in enumerate(self.residues):
+			colors.append(color_dict[resi.id])
+
+			_score = ((resi.size + min + 2.5) * 4)
+			mean_scores.append(_score)
+
+			angle = master_angle * pos
+			level = math.floor(pos / step)
+
+			x_, y_ = self.get_coor(angle, level = level)
+
+			Xs.append(x_)
+
+			#Distance between wheels
+			Ys.append(y_ - (self.wheel_num * wheel_sep))
+			names.append(resi.id)
+			aa_num.append(resi.num)
+
+		source = ColumnDataSource(data = dict(_Xs = Xs, _Ys = Ys, _names = names, _colors = colors, _aa_num = aa_num, _scores = mean_scores))
+
+		return source
+
+	def plot(self, plot):
+		
+	#Generate helical wheel projection
+		step = self.rules.step
+		data = self.source.data
+		start = self.residues[0].num
+		stop = self.residues[-1].num
+
+		plot.line(x = data["_Xs"][:step], y = data["_Ys"][:step])
+		plot.circle(x =  "_Xs", y =  "_Ys", color =  "_colors", name = "_names", size = "_scores", source = self.source)
+
+		labels = LabelSet(
+							x = "_Xs", y = "_Ys", text = "_names", level = "overlay", x_offset = -5, 
+							y_offset = -5, source = self.source, render_mode = "canvas", text_color = "white"
+						)
+
+		seq_range = Label(
+							x = data["_Xs"][0] + 4, y = data["_Ys"][0] - 27,
+							text= ("Sequence Range: " + str(start + 1) + "-" + str(stop)),
+							text_font_size = "18pt"
+						)
+
+		plot.add_layout(labels)
+		plot.add_layout(seq_range)
+
+# def get_wheel_seq(primary_seq):
+# 	wheel_seq = []
+# 	threshold = 18
+# 	i = 0
+
+# 	while i < (len(primary_seq)):
+# 		if len(wheel_seq) > threshold:
+# 			wheel_seq = wheel_seq[:threshold]
+# 			i = threshold
+# 			threshold += 18
+
+# 			if i >= len(primary_seq):
+# 				break
+
+# 		wheel_seq.append(primary_seq[i])
+# 		try:
+# 			wheel_seq.append(primary_seq[i + 11])
+# 		except: pass
+
+# 		try:
+# 			wheel_seq.append(primary_seq[i + 4])
+# 		except: pass
+
+# 		try:
+# 			wheel_seq.append(primary_seq[i + 15])
+# 		except: pass
+
+# 		try:
+# 			wheel_seq.append(primary_seq[i + 8])
+# 		except: pass
+		
+# 		i += 1
+
+# 	return wheel_seq
+
+def get_wheel_seq(residues):
+	wheel_seq = []
+	threshold = 18
+	i = 0
+
+	while i < (len(residues)):
+		if len(wheel_seq) > threshold:
+			wheel_seq = wheel_seq[:threshold]
+			i = threshold
+			threshold += 18
+
+			if i >= len(residues):
+				break
+
+		wheel_seq.append(residues[i])
+		try:
+			wheel_seq.append(residues[i + 11])
+		except: pass
+
+		try:
+			wheel_seq.append(residues[i + 4])
+		except: pass
+
+		try:
+			wheel_seq.append(residues[i + 15])
+		except: pass
+
+		try:
+			wheel_seq.append(residues[i + 8])
+		except: pass
+		
+		i += 1
+
+	return wheel_seq
+
+def find_phobe_patch(wheel_seq, rules):
+	hp_dict = rules.hydrophobe_dict
+	window_size = 5
+	i = window_size - 1
+	hp_scores = []
+	while i < len(wheel_seq):
+		print("i = ", i, end = "  ")
+		print("i' = ", wheel_seq[i].num, end = " ")
+		score = 0
+		for x in range(i - window_size + 1, i + 1):
+			print(wheel_seq[x].id, end = "  ")
+			score += hp_dict[wheel_seq[x].id]
+
+		print(round(score, 1))
+
+		# print("i = ", i, wheel_seq[i-window_size:i], round(score, 1))
+
+		hp_scores.append(round(score, 1))
+
+		i += 1
+
+	return hp_scores
+
+def plot_amph_wheels(rules, residues, hp_scores, plot, wheel_seq):
+	thresh = 7
+	wheels = []
+	for wheel_pos, score in enumerate(hp_scores):
+		if score > thresh:
+			if wheel_pos > 15 and wheel_pos < (len(residues) - 15): #REFINE
+				wheels.append(Wheel(rules, residues[wheel_seq[wheel_pos].num-9:wheel_seq[wheel_pos].num+9], len(wheels)))
+			
+	for wheel in wheels:
+		wheel.plot(plot)
 
 #Assesses a user-defined subset of the provided sequence and alignment
 def handle_range(seq, alignment):
@@ -305,94 +369,80 @@ def get_score_matrix(align_seqs, matrix):
 
 	return score_matrix
 
+def get_resis(seq_path, alignment_path, rules):
+	#Get primary sequence to be analyzed
+	try:
+		seq = SeqIO.read(seq_path, "fasta").seq
+		if len(seq) == 0:
+			raise Exception
+	except:
+		raise ValueError("Invalid protein sequence provided for analyzation.")
 
-#Get x and y coordinates based on angle and ring number (level)
-def get_coor(angle, level = 0, degrees = True):
-	global master_rad
-	global level_sep
+	#Get and clean sequence alignment
+	if alignment_path is None:
+		mean_scores = np.full(len(seq), rules.default_resi_size)
+	else:
+		try:
+			align_seqs = []
 
-	if degrees:
-		angle = math.radians(angle)
+			for fasta in SeqIO.parse(args.align_path, "fasta"):
+				align_seqs.append(fasta.seq)
+
+			align_seqs = np.array(align_seqs)
+
+			gap_found = True
+			while gap_found:
+				gap_found = False
+				for pos in range(len(align_seqs[0])):
+					if align_seqs[0, pos] == "-":
+						align_seqs = np.delete(align_seqs, pos, axis = 1)
+						gap_found = True
+						break
+
+			score_matrix = get_score_matrix(align_seqs, rules.matrix)
+			mean_scores = np.mean(score_matrix, axis = 0)
+		except:
+			raise ValueError("Invalid alignment sequence provided.")
+
+	_residues = []
+	for i in range(len(seq)):
+		_num = i + 1
+		_residues.append(Residue(seq[i], mean_scores[i], _num))
 	
-	rad = master_rad + (level * level_sep)
-
-	x = rad * math.sin(angle)
-	y = rad * math.cos(angle)
-
-	return x, y
-
-#Build column data source to be used to construct bokeh diagram
-def build_CDS(seq, wheel_num, scores):
-	colors, Xs, Ys, names, aa_num, mean_scores = ([] for _ in range(6))
-
-	#Might want to rework system for converting conservation score to circle size
-	min = abs(np.amin(scores))
-	min = 9.4
-
-	for num, aa in enumerate(seq):
-		global color_dict
-		global master_angle
-		global wheel_sep
-
-		colors.append(color_dict[aa])
-		score_ = ((scores[num + (wheel_num * step)] + min + 2.5)  * 4)
-		mean_scores.append(score_)
-
-		angle = master_angle * num
-		level = math.floor(num / step)
-
-		x_, y_ = get_coor(angle, level = level)
-
-		Xs.append(x_)
-
-		#Distance between wheels
-		Ys.append(y_ - (wheel_num * wheel_sep))
-		names.append(aa)
-		aa_num.append(num + (wheel_num * step) + 1)
-
-	source = ColumnDataSource(data = dict(_Xs = Xs, _Ys = Ys, _names = names, _colors = colors, _aa_num = aa_num, _scores = mean_scores))
-
-	return source
-
-
+	return _residues
 
 def main():
-	blosum = MatrixInfo.blosum80
-	global seq
-	global align_seqs
-
-	seq, align_seqs = handle_range(seq, align_seqs)
-
 	hover = HoverTool(tooltips = [("aa Position", "@_aa_num"), ("conservation score", "@_scores")])
 
 	plot = figure(
 					tools = [hover, "box_select, box_zoom, wheel_zoom, pan, reset, save"],
 					x_range = (-20, 20), y_range = (-20, 20),
 					height = 800, width = 800
-				)
+				 )
 
-	# bounds = get_bounds(seq)
 
-	if args.align_path is None:
-		#SETS DEFAULT AA SIZE
-		mean_scores = np.full((len(seq)), 2)
-	else:
-		score_matrix = get_score_matrix(align_seqs, blosum)
-		mean_scores = np.mean(score_matrix, axis = 0)
+	#-----------------------------------------------------------
+
+	rules = Rule_set(args.coiled_coil)
+	master_res_list = get_resis(args.seq_path, args.align_path, rules)
+
+	# master_wheel = Wheel_set(rules, master_res_list)
+	# master_wheel.plot_wheels(plot)
+
+	#-----------------------------------------------------------
+	#TEST
+
+	prim_seq = [resi.id for resi in master_res_list]
+	wheel_seq = get_wheel_seq(master_res_list)
+
+	scores = find_phobe_patch(wheel_seq, rules)
+	# print(scores)
+	plot_amph_wheels(rules, master_res_list, scores, plot, wheel_seq)
 
 	#-----------------------------------------------------------
 
 
-	master_wheel = Wheel_set(Rule_set(args.coiled_coil), seq, mean_scores)
-
-	master_wheel.plot_wheels(plot)
-
-	#-----------------------------------------------------------
-
-
-	# for num, couple in enumerate(bounds):
-	# 	source = build_CDS(seq[couple[0]:couple[1]], num, mean_scores)
-	# 	plot_wheel(source, couple[0], couple[1], plot)
+	
 
 	plot.grid.visible = False
 	plot.axis.visible = False
