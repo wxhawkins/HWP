@@ -420,19 +420,19 @@ def main():
 	rules = Rule_set(args.coiled_coil)
 	master_res_list = get_resis(args.seq_path, args.align_path, rules)
 
-	# master_wheel = Wheel_set(rules, master_res_list)
-	# master_wheel.plot_wheels(plot)
+	master_wheel = Wheel_set(rules, master_res_list)
+	master_wheel.plot_wheels(plot)
 
 	#-----------------------------------------------------------
 	#TEST
 
-	prim_seq = [resi.id for resi in master_res_list]
-	# wheel_seq = get_wheel_seq(master_res_list)
+	# prim_seq = [resi.id for resi in master_res_list]
+	# # wheel_seq = get_wheel_seq(master_res_list)
 
-	amph_wheels = find_phobe_patch(rules, master_res_list)
+	# amph_wheels = find_phobe_patch(rules, master_res_list)
 
-	for wheel in amph_wheels:
-		wheel.plot(plot)
+	# for wheel in amph_wheels:
+	# 	wheel.plot(plot)
 
 	# print(scores)
 	# plot_amph_wheels(rules, master_res_list, scores, plot, wheel_seq)
