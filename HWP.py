@@ -64,7 +64,7 @@ class Residue:
 		return self.id
 
 class Wheel_set:
-	def __init__(self, _rules, _residues, _wheels = None):
+	def __init__(self, _rules, _residues, _wheels=None):
 		self.rules = _rules
 		self.residues = _residues
 		self.length = len(self.residues)
@@ -251,56 +251,6 @@ def get_wheel_seq(residues):
 
 	return wheel_seq
 
-def find_phobe_patch(rules, residues):
-	amph_wheels = []
-	hp_dict = rules.hydrophobe_dict
-	step = rules.step
-	window_size = 5
-	thresh = 0
-	
-	 #Get every possible wheel (set of 18 residues for normal helix)
-	for k in range (step, len(residues) - step):
-		sub_residues = residues[k-step:k] # primary amino acid sequence
-		wheel_seq = [] # sequence of amino acids around wheel
-		for pos in rules.wheel_order:
-			try:
-				wheel_seq.append(sub_residues[pos])
-			except:
-				pass
-
-		# print("sub_residues = ", [resi.id for resi in sub_residues])
-		# print("wheel seq =", [resi.id for resi in wheel_seq])
-		
-		#Score wheel by sliding window around 18-member wheel
-		i = window_size - 1
-		max_score = 0
-		start_pos = 0
-		
-		while i < step:
-			score = 0
-			# Sum scores of residues in window
-			for x in range(i - window_size + 1, i + 1):
-				# print(sub_residues[x].id, end = "  ")
-				score += hp_dict[wheel_seq[x].id]
-
-			if score > max_score:
-				start_pos = (i - window_size + 1)
-				max_score = score
-			# print(round(score, 1))
-
-			i += 1
-
-		if max_score > thresh:
-			# input()
-			amph_wheels.append(Wheel(rules, sub_residues, len(amph_wheels)))
-			# print("k =", k, end = " ")
-			print("k' =", sub_residues[0].num, end = " ")
-			print("window = ", [resi.id for resi in wheel_seq[start_pos:(start_pos + window_size)]], end = " ")
-			print("score =", max_score)
-
-	
-
-	return amph_wheels
 
 def plot_amph_wheels(rules, residues, hp_scores, plot, wheel_seq):
 	thresh = 7
@@ -314,31 +264,24 @@ def plot_amph_wheels(rules, residues, hp_scores, plot, wheel_seq):
 		wheel.plot(plot)
 
 # Assesses a user-defined subset of the provided sequence and alignment
-def handle_range(seq, alignment):
+def handle_range(residues):
 	range_ = args.seq_range
 
 	if range_ is None:
-		return seq, alignment
+		return residues
 
 	range_search = re.search("(\d+)-(\d+)", range_)
-
+	
 	try:
 		start = int(range_search.group(1))
 		stop = int(range_search.group(2))
 
-		if start < 0 or stop > len(seq) or stop < start:
+		if start < 0 or stop > len(residues) or stop < start:
 			raise Exception
 	except:
 		raise ValueError("Invalid range provided.")
 
-	new_seq = seq[start:stop]
-
-	new_align = []
-	if alignment is not None:
-		for sequence in alignment:
-			new_align.append(sequence[start:stop])
-
-	return new_seq, new_align
+	return residues[start:stop + 1]
 
 # Return conservation score from Blosum matrix for given aa pair
 def get_score(pair, matrix):
@@ -403,7 +346,7 @@ def get_resis(seq_path, alignment_path, rules):
 		_num = i + 1
 		_residues.append(Residue(seq[i], mean_scores[i], _num))
 	
-	return _residues
+	return handle_range(_residues)
 
 def main():
 	hover = HoverTool(tooltips = [("aa Position", "@_aa_num"), ("conservation score", "@_scores")])
